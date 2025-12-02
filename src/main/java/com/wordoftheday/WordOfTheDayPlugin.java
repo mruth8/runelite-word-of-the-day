@@ -8,7 +8,6 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
-import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.chat.ChatMessageManager;
 import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
@@ -38,6 +37,8 @@ public class WordOfTheDayPlugin extends Plugin
 	private WordOfTheDayService wordOfTheDayService;
 
 	private boolean hasShownWordToday = false;
+	private boolean hasShownMedievalWordToday = false;
+	private boolean hasShownCustomWordToday = false;
 	private String lastDateChecked = "";
 
 	@Override
@@ -51,6 +52,8 @@ public class WordOfTheDayPlugin extends Plugin
 	{
 		log.info("Word of the Day plugin stopped!");
 		hasShownWordToday = false;
+		hasShownMedievalWordToday = false;
+		hasShownCustomWordToday = false;
 		lastDateChecked = "";
 	}
 
@@ -74,9 +77,20 @@ public class WordOfTheDayPlugin extends Plugin
 		if (client.getGameState() == GameState.LOGGED_IN && loginTickDelay > 0)
 		{
 			loginTickDelay--;
-			if (loginTickDelay == 0 && config.showOnLogin() && shouldShowWord())
+			if (loginTickDelay == 0)
 			{
-				showWordOfTheDay();
+				if (config.wordOfTheDay() && shouldShowWord())
+				{
+					showWordOfTheDay();
+				}
+				if (config.medievalWordOfTheDay() && shouldShowMedievalWord())
+				{
+					showMedievalWordOfTheDay();
+				}
+				if (config.customWordOfTheDay() && shouldShowCustomWord())
+				{
+					showCustomWordOfTheDay();
+				}
 			}
 		}
 	}
@@ -101,40 +115,141 @@ public class WordOfTheDayPlugin extends Plugin
 		return !hasShownWordToday;
 	}
 
+	private boolean shouldShowMedievalWord()
+	{
+		// Check if we've already shown the medieval word today
+		String today = java.time.LocalDate.now().toString();
+		
+		if (today.equals(lastDateChecked) && hasShownMedievalWordToday)
+		{
+			return false;
+		}
+
+		// Reset if it's a new day
+		if (!today.equals(lastDateChecked))
+		{
+			hasShownMedievalWordToday = false;
+			lastDateChecked = today;
+		}
+
+		return !hasShownMedievalWordToday;
+	}
+
+	private boolean shouldShowCustomWord()
+	{
+		// Check if we've already shown the custom word today
+		String today = java.time.LocalDate.now().toString();
+		
+		if (today.equals(lastDateChecked) && hasShownCustomWordToday)
+		{
+			return false;
+		}
+
+		// Reset if it's a new day
+		if (!today.equals(lastDateChecked))
+		{
+			hasShownCustomWordToday = false;
+			lastDateChecked = today;
+		}
+
+		return !hasShownCustomWordToday;
+	}
+
 	private void showWordOfTheDay()
 	{
-		// Fetch word of the day asynchronously
-		wordOfTheDayService.fetchWordOfTheDay()
-			.thenAccept(word -> {
-				if (word != null && !word.isEmpty())
+		// Fetch words of the day from all sources asynchronously
+		wordOfTheDayService.fetchAllWordsOfTheDay()
+			.thenAccept(words -> {
+				if (words != null && !words.isEmpty())
 				{
-					String message = ColorUtil.wrapWithColorTag(
-						"Word of the Day: " + word,
-						config.messageColor()
-					);
-					
-					final String chatMessage = new ChatMessageBuilder()
-						.append(message)
-						.build();
+					// Display each word on a separate line
+					for (String wordEntry : words)
+					{
+						// Build message with color tags - pass directly to runeLiteFormattedMessage
+						// ChatMessageBuilder.append() escapes HTML-like tags, so we build the message directly
+						String coloredMessage = ColorUtil.wrapWithColorTag(wordEntry, config.messageColor());
 
-					// ChatMessageManager.queue() is thread-safe and can be called from any thread
-					chatMessageManager.queue(
-						QueuedMessage.builder()
-							.type(ChatMessageType.GAMEMESSAGE)
-							.runeLiteFormattedMessage(chatMessage)
-							.build()
-					);
+						// ChatMessageManager.queue() is thread-safe and can be called from any thread
+						chatMessageManager.queue(
+							QueuedMessage.builder()
+								.type(ChatMessageType.GAMEMESSAGE)
+								.runeLiteFormattedMessage(coloredMessage)
+								.build()
+						);
+					}
 
 					hasShownWordToday = true;
-					log.info("Displayed word of the day: {}", word);
+					log.info("Displayed words of the day from all sources");
 				}
 				else
 				{
-					log.warn("Failed to fetch word of the day");
+					log.warn("Failed to fetch words of the day");
 				}
 			})
 			.exceptionally(throwable -> {
-				log.error("Error fetching word of the day", throwable);
+				log.error("Error fetching words of the day", throwable);
+				return null;
+			});
+	}
+
+	private void showMedievalWordOfTheDay()
+	{
+		// Fetch medieval word of the day asynchronously
+		wordOfTheDayService.fetchMedievalWordOfTheDay()
+			.thenAccept(result -> {
+				if (result != null && result.getWord() != null && !result.getWord().isEmpty())
+				{
+					String message = result.format("Medieval Word of the Day");
+					String coloredMessage = ColorUtil.wrapWithColorTag(message, config.messageColor());
+
+					chatMessageManager.queue(
+						QueuedMessage.builder()
+							.type(ChatMessageType.GAMEMESSAGE)
+							.runeLiteFormattedMessage(coloredMessage)
+							.build()
+					);
+
+					hasShownMedievalWordToday = true;
+					log.info("Displayed medieval word of the day: {}", result.getWord());
+				}
+				else
+				{
+					log.warn("Failed to fetch medieval word of the day");
+				}
+			})
+			.exceptionally(throwable -> {
+				log.error("Error fetching medieval word of the day", throwable);
+				return null;
+			});
+	}
+
+	private void showCustomWordOfTheDay()
+	{
+		// Fetch custom word of the day asynchronously
+		wordOfTheDayService.fetchCustomWordOfTheDay()
+			.thenAccept(result -> {
+				if (result != null && result.getWord() != null && !result.getWord().isEmpty())
+				{
+					String message = result.format("Custom Word of the Day");
+					String coloredMessage = ColorUtil.wrapWithColorTag(message, config.messageColor());
+
+					chatMessageManager.queue(
+						QueuedMessage.builder()
+							.type(ChatMessageType.GAMEMESSAGE)
+							.runeLiteFormattedMessage(coloredMessage)
+							.build()
+					);
+
+					hasShownCustomWordToday = true;
+					log.info("Displayed custom word of the day: {}", result.getWord());
+				}
+				else
+				{
+					log.warn("Failed to fetch custom word of the day");
+				}
+			})
+			.exceptionally(throwable -> {
+				log.error("Error fetching custom word of the day", throwable);
 				return null;
 			});
 	}
